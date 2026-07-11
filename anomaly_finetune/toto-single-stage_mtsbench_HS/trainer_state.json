@@ -1,0 +1,14 @@
+{
+ "log_history": [
+  {
+   "step": 10,
+   "loss": 2.8372,
+   "lr": 1.4950000000000001e-05,
+   "normal_loss": 0.2761,
+   "mse_normal_step": 0.6856,
+   "anomaly_loss": 0.7481,
+   "mse_anomaly_step": 6702028242331030.0,
+   "anomaly_active_frac": 0.932
+  }
+ ]
+}

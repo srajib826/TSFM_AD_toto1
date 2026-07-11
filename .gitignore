@@ -1,0 +1,112 @@
+*.rdb
+*.swp
+*.swo
+*.swn
+*.so
+*.log
+
+# Python
+*.pyc
+*.egg/
+*.egg*
+*egg*
+pyx/*.c
+pyx/*.html
+.ipynb_checkpoints
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
+
+*~
+.\#*
+\#~
+
+# Eclipse
+bin/
+*.launch
+.settings
+.project
+.classpath
+
+# IntelliJ IDEA
+**/.idea
+*.iml
+*.ipr
+*.iws
+out/
+
+# Visual Studio Code
+**/.vscode
+**.code-workspace
+
+# Projects
+**/.venv
+env/
+
+
+# Packaging
+**/build
+**/*.egg-info
+
+# Cache
+**/.mypy_cache
+**/.pytest_cache
+**/__pycache__
+
+# Logs
+*.log
+**/log/
+**/logs/
+*.out
+*.err
+nohup.out
+
+# Checkpoints & model weights
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+**/checkpoints/
+**/*-ckpt/
+**/finetuned-ckpt/
+
+# Data / result artifacts
+*.png
+*.csv
+*.tsv
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.parquet
+*.h5
+*.hdf5
+
+# Text files (see whitelist below)
+*.txt
+
+# Experiment outputs
+anomaly_finetune/prepared_total/
+anomaly_finetune/_smoke_run/
+**/wandb/
+**/runs/
+
+# --- Whitelist: these must stay tracked ---
+!requirements.txt
+!**/requirements*.txt
+!README.md
+!**/README*.md
+# Apache-2.0 (inherited from upstream DataDog/toto) requires retaining
+# the license text and third-party attribution manifest.
+!LICENSE
+!LICENSE-3rdparty.csv
+!**/LICENSE
+!**/LICENSE-3rdparty.csv

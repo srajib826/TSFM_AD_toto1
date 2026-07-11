@@ -1,0 +1,46 @@
+# Requirements for the Toto anomaly fine-tuning pipeline
+#   /home/rajib/toto/anomaly_finetune  (env: toto_ft, Python 3.11)
+#
+# Setup:
+#   conda create -y -n toto_ft python=3.11
+#   conda activate toto_ft
+#   pip install -r requirements.txt
+#   # then install the Toto 1.0 package itself (not on this list because it is the
+#   # local repo you are fine-tuning):
+#   pip install -e /home/rajib/toto            # or:  pip install toto-ts==0.2.0
+#
+# IMPORTANT: setuptools must stay < 81. setuptools 81+ removed `pkg_resources`, which
+# `lightning.fabric` (a transitive Toto dependency) still imports at import time; with
+# a newer setuptools, `import toto` fails with "No module named 'pkg_resources'".
+
+# --- core DL / LoRA ---
+torch==2.7.0                      # default wheel is CUDA 12.6; use a CPU/other-CUDA index if needed
+peft==0.19.1                      # LoRA adapters + modules_to_save for the [SEP]/[REG] tokens
+accelerate==1.14.0
+safetensors==0.8.0
+
+# --- Toto model dependencies (also pulled by `pip install -e /home/rajib/toto`) ---
+transformers==4.52.1
+jaxtyping==0.2.29
+einops==0.7.0
+rotary-embedding-torch==0.8.6
+beartype==0.18.5
+gluonts==0.16.2
+lightning==2.3.3
+datasets==2.17.1
+
+# --- data prep / scoring / plotting ---
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.15.3                     # forward.py: scipy.ndimage.uniform_filter1d
+scikit-learn==1.5.0
+matplotlib==3.9.2                 # plot_loss_curves.py / loss_curves.ipynb
+tqdm==4.66.3
+PyYAML==6.0.2
+
+# --- must stay below 81 (provides pkg_resources for lightning.fabric) ---
+setuptools<81
+
+# NOTE: VUS metrics (forward.py) come from the `VUS_ROC_VUS_PR` package under
+#   /home/rajib/Sir_git_TSAD/TSFM-anomaly/Chronos_Finetuning/rajib_work_space
+# which is added to PYTHONPATH by run_forward_total.sh (not a pip package).
