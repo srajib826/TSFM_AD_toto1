@@ -31,6 +31,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 from scipy.ndimage import uniform_filter1d
+from tqdm.auto import tqdm
 
 import warnings
 
@@ -117,7 +118,8 @@ def load_model(args, device):
 
 
 @torch.no_grad()
-def predict_quantiles(model, wrapper, chunk_windows, device, num_samples, qlevels):
+def predict_quantiles(model, wrapper, chunk_windows, device, num_samples, qlevels, sample_chunk,
+                      amp=False):
     """Run the model on a chunk of test windows; return list of (q10,q50,q90) per window."""
     from toto_anomaly_data import collate_windows
 
@@ -127,17 +129,31 @@ def predict_quantiles(model, wrapper, chunk_windows, device, num_samples, qlevel
     pmask = batch.padding_mask[..., :inp_len]
     imask = batch.id_mask[..., :inp_len]
 
-    dist, loc_b, scale_b = model(inp, pmask, imask)              # dist over (B,V,P); (B,V,1)
-    samples = dist.sample((num_samples,))                        # (S,B,V,P) scaled
-    samples = samples * scale_b + loc_b                          # unscale
-    ql = torch.tensor(qlevels, device=samples.device, dtype=samples.dtype)
+    with torch.autocast("cuda", dtype=torch.float16, enabled=amp and device.type == "cuda"):
+        dist, loc_b, scale_b = model(inp, pmask, imask)          # dist over (B,V,P); (B,V,1)
+
+    # MixtureSameFamily.sample() draws from all K components and *then* gathers, so it
+    # transiently holds an (S,B,V,P,K) tensor -- a 256-sample draw is several GB on a
+    # wide-variate dataset. Draw in chunks along S and park them on the CPU; the
+    # quantile reduction needs all S at once but is cheap there.
+    parts = []
+    drawn = 0
+    while drawn < num_samples:
+        s = min(sample_chunk, num_samples - drawn)
+        chunk = dist.sample((s,)) * scale_b + loc_b              # (s,B,V,P) unscaled
+        parts.append(chunk.float().cpu())
+        del chunk
+        drawn += s
+    samples = torch.cat(parts, dim=0)                            # (S,B,V,P) on CPU
+    del parts, dist
+    ql = torch.tensor(qlevels, dtype=samples.dtype)
 
     # Quantile per window (torch.quantile has a max-element limit that a full batch
     # of samples can exceed).
     out = []
     for i, w in enumerate(chunk_windows):
         f = int(w["target"].shape[0])
-        q = torch.quantile(samples[:, i, :f], ql, dim=0).float().cpu().numpy()  # (3,f,P)
+        q = torch.quantile(samples[:, i, :f], ql, dim=0).numpy()  # (3,f,P)
         out.append((q[0], q[1], q[2]))
     return out
 
@@ -145,26 +161,29 @@ def predict_quantiles(model, wrapper, chunk_windows, device, num_samples, qlevel
 # ─────────────────────────────────────────────────────────────────────────────
 #  Main
 # ─────────────────────────────────────────────────────────────────────────────
-def eval_dataset(ds, args, model, wrapper, device, get_metrics):
+def eval_dataset(ds, args, model, wrapper, device, get_metrics, pbar=None):
     ds_dir = os.path.join(args.prepared_dir, "per_dataset", ds)
     test_pkl = os.path.join(ds_dir, "test_model_inputs.pkl")
     meta_pkl = os.path.join(ds_dir, "test_series_meta.pkl")
     if not (os.path.exists(test_pkl) and os.path.exists(meta_pkl)):
-        print(f"[{ds}] no test pkl, skipping")
+        tqdm.write(f"[{ds}] no test pkl, skipping")
         return None
     with open(test_pkl, "rb") as f:
         windows = pickle.load(f)
     with open(meta_pkl, "rb") as f:
         meta = pickle.load(f)
     if not windows:
-        print(f"[{ds}] empty test set, skipping")
+        tqdm.write(f"[{ds}] empty test set, skipping")
         return None
 
     N = wrapper.normal_signal_length
     C = wrapper.context_length
     P = wrapper.prediction_length
     fut_lo, fut_hi = N + C, N + C + P
-    print(f"[{ds}] {len(windows)} windows / {len(meta)} series; predict {P}, compare target[:,{fut_lo}:{fut_hi}]")
+    tqdm.write(f"[{ds}] {len(windows)} windows / {len(meta)} series; "
+               f"predict {P}, compare target[:,{fut_lo}:{fut_hi}]")
+    if pbar is not None:
+        pbar.set_postfix_str(f"{ds} ({len(windows)} win)")
 
     feat_scores = {sid: np.full((m["n_features"], m["length"]), np.nan, dtype=np.float32) for sid, m in meta.items()}
     covered = {sid: [None, None] for sid in meta}
@@ -172,7 +191,10 @@ def eval_dataset(ds, args, model, wrapper, device, get_metrics):
     qlevels = [0.1, 0.5, 0.9]
     for i in range(0, len(windows), args.batch_windows):
         chunk = windows[i : i + args.batch_windows]
-        preds = predict_quantiles(model, wrapper, chunk, device, args.num_samples, qlevels)
+        preds = predict_quantiles(model, wrapper, chunk, device, args.num_samples, qlevels,
+                                  args.sample_chunk, args.amp)
+        if pbar is not None:
+            pbar.update(len(chunk))
         for w, (q10, q50, q90) in zip(chunk, preds):
             actual = np.asarray(w["target"][:, fut_lo:fut_hi], dtype=np.float32)  # (F,P)
             fscore = compute_feature_score(actual, q10, q50, q90, args.score_method)
@@ -199,8 +221,8 @@ def eval_dataset(ds, args, model, wrapper, device, get_metrics):
             continue
         res = get_metrics(y_score, y_true, slidingWindow=args.sliding_window_VUS,
                           version=args.vus_version, thre=args.vus_thre)
-        print(f"  {sid:<26} VUS-PR={res['VUS-PR']:.4f}  VUS-ROC={res['VUS-ROC']:.4f}  "
-              f"AUC-PR={res['AUC-PR']:.4f}  AUC-ROC={res['AUC-ROC']:.4f}")
+        tqdm.write(f"  {sid:<26} VUS-PR={res['VUS-PR']:.4f}  VUS-ROC={res['VUS-ROC']:.4f}  "
+                   f"AUC-PR={res['AUC-PR']:.4f}  AUC-ROC={res['AUC-ROC']:.4f}")
         results["series_id"].append(sid)
         results["dataset"].append(ds)
         for k in ("VUS-PR", "VUS-ROC", "AUC-PR", "AUC-ROC",
@@ -221,12 +243,25 @@ def main():
         per_ds = os.path.join(args.prepared_dir, "per_dataset")
         datasets = sorted(d for d in os.listdir(per_ds) if os.path.isdir(os.path.join(per_ds, d)))
 
-    all_results = defaultdict(list)
+    # Count windows up front so the bar reports one ETA for the whole run rather than
+    # restarting per dataset. Re-reading the pkls costs a few seconds against hours of
+    # inference; the loaded list is dropped immediately so it doesn't hold 6GB of RAM.
+    total_windows = 0
     for ds in datasets:
-        r = eval_dataset(ds, args, model, wrapper, device, get_metrics)
+        p = os.path.join(args.prepared_dir, "per_dataset", ds, "test_model_inputs.pkl")
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                total_windows += len(pickle.load(f))
+    print(f"Scoring {total_windows} windows across {len(datasets)} datasets")
+
+    all_results = defaultdict(list)
+    pbar = tqdm(total=total_windows, desc="infer", unit="win", dynamic_ncols=True, smoothing=0.05)
+    for ds in datasets:
+        r = eval_dataset(ds, args, model, wrapper, device, get_metrics, pbar=pbar)
         if r:
             for k, v in r.items():
                 all_results[k].extend(v)
+    pbar.close()
 
     if not all_results["series_id"]:
         print("No series scored.")
@@ -259,7 +294,16 @@ def parse_args():
     p.add_argument("--prediction_length", type=int, default=64)
 
     p.add_argument("--num_samples", type=int, default=256)
-    p.add_argument("--batch_windows", type=int, default=16)
+    # 16 windows OOMs an 8GB card: training itself only fit 6 (and that was the
+    # sampling-free forward). Sampling is the peak here, not the model.
+    p.add_argument("--batch_windows", type=int, default=4)
+    p.add_argument("--sample_chunk", type=int, default=32,
+                   help="Draw the num_samples posterior samples in chunks of this size. "
+                        "Caps the transient (chunk,B,V,P,K) mixture tensor; does not change "
+                        "the total sample count, only peak memory.")
+    p.add_argument("--amp", action="store_true",
+                   help="Run the backbone in fp16 autocast. ~1.4x faster; measured q10/q90 drift "
+                        "vs fp32 is below the seed-to-seed Monte Carlo noise at num_samples=256.")
 
     p.add_argument("--score_method", default="interval",
                    choices=["mse", "interval", "normalized_deviation", "smape"])

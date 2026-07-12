@@ -5,8 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source /home/rajib/miniconda3/etc/profile.d/conda.sh
+# source /home/rajib/miniconda3/etc/profile.d/conda.sh
+source /userdata1/rajib/miniconda3/etc/profile.d/conda.sh
 conda activate toto_ft
+
+# Import `toto` from the repo checkout (../toto), not from site-packages, so local
+# edits to the model take effect without reinstalling.
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 PREPARED_DIR="${PREPARED_DIR:-$SCRIPT_DIR/prepared_total}"
 OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/toto-single-stage_mtsbench_HS}"
@@ -34,15 +42,30 @@ P_ANOM="${P_ANOM:-0.3333333333333333}"
 # Optim / schedule / loop
 LR="${LR:-1e-4}"
 MIN_LR="${MIN_LR:-1e-5}"
-WARMUP_STEPS="${WARMUP_STEPS:-200}"
-STABLE_STEPS="${STABLE_STEPS:-1000}"
-DECAY_STEPS="${DECAY_STEPS:-1000}"
-MAX_STEPS="${MAX_STEPS:-2200}"
-TRAIN_BATCH_WINDOWS="${TRAIN_BATCH_WINDOWS:-8}"
+# WarmupStableDecayLR derives its total from these three phases, NOT from max_steps:
+# they must sum to MAX_STEPS, or the tail of the run is stranded at min_lr.
+WARMUP_STEPS="${WARMUP_STEPS:-300}"
+STABLE_STEPS="${STABLE_STEPS:-3200}"
+DECAY_STEPS="${DECAY_STEPS:-2500}"
+MAX_STEPS="${MAX_STEPS:-6000}"
+# agg_mode=batch_global computes L_good / the hinge as ratios of sums over ONE
+# micro-batch, so train_batch_windows -- not the accumulated total -- is the
+# contrastive pool. Keep it as large as the 8GB card allows (6 peaks at ~7.1GB);
+# grad_accum only denoises the gradient, so spend the time on more steps instead.
+TRAIN_BATCH_WINDOWS="${TRAIN_BATCH_WINDOWS:-6}"
 GRAD_ACCUM="${GRAD_ACCUM:-2}"
-EVAL_EVERY="${EVAL_EVERY:-200}"
+EVAL_EVERY="${EVAL_EVERY:-250}"
+# Keep eval <= train batch; at 8 it can OOM against a train peak of 6.
+EVAL_BATCH_WINDOWS="${EVAL_BATCH_WINDOWS:-6}"
 LOG_EVERY="${LOG_EVERY:-10}"
 SEED="${SEED:-42}"
+
+SCHED_TOTAL=$((WARMUP_STEPS + STABLE_STEPS + DECAY_STEPS))
+if [ "$SCHED_TOTAL" -ne "$MAX_STEPS" ]; then
+  echo "ERROR: warmup+stable+decay ($SCHED_TOTAL) != max_steps ($MAX_STEPS)." >&2
+  echo "       The LR schedule would not line up with the run length." >&2
+  exit 1
+fi
 
 ARGS=(
   --prepared_dir         "$PREPARED_DIR"
@@ -70,6 +93,7 @@ ARGS=(
   --train_batch_windows  "$TRAIN_BATCH_WINDOWS"
   --grad_accum           "$GRAD_ACCUM"
   --eval_every           "$EVAL_EVERY"
+  --eval_batch_windows   "$EVAL_BATCH_WINDOWS"
   --log_every            "$LOG_EVERY"
   --seed                 "$SEED"
 )

@@ -5,10 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source /home/rajib/miniconda3/etc/profile.d/conda.sh
+# source /home/rajib/miniconda3/etc/profile.d/conda.sh
+source /userdata1/rajib/miniconda3/etc/profile.d/conda.sh
 conda activate toto_ft
 
-DATA_ROOT="${DATA_ROOT:-/home/rajib/mTSBench/Datasets/mTSBench}"
+# DATA_ROOT="${DATA_ROOT:-/home/rajib/mTSBench/Datasets/mTSBench}"
+DATA_ROOT="${DATA_ROOT:-/userdata1/rajib/mTSBench/}"
 OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/prepared_total}"
 
 NORMAL_SIGNAL_LENGTH="${NORMAL_SIGNAL_LENGTH:-256}"

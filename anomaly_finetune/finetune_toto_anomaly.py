@@ -34,8 +34,20 @@ import os
 
 import torch
 import torch.nn as nn
+from tqdm.auto import tqdm
 
 logger = logging.getLogger("finetune_toto_anomaly")
+
+
+class TqdmLoggingHandler(logging.StreamHandler):
+    """Route log records through tqdm.write so they don't corrupt the progress bar."""
+
+    def emit(self, record):
+        try:
+            tqdm.write(self.format(record))
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -239,7 +251,7 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[logging.StreamHandler(),
+        handlers=[TqdmLoggingHandler(),
                   logging.FileHandler(os.path.join(args.output_dir, "finetune.log"))],
     )
     logger.info(f"Config: {vars(args)}")
@@ -291,8 +303,15 @@ def main():
     model.train()
     train_acc = _fresh_acc()
     running_loss, running_n = 0.0, 0
+    best_val = {"loss": float("inf"), "step": -1}
 
-    for step in range(1, args.max_steps + 1):
+    pbar = tqdm(
+        range(1, args.max_steps + 1),
+        desc="train",
+        unit="step",
+        dynamic_ncols=True,
+    )
+    for step in pbar:
         optimizer.zero_grad(set_to_none=True)
         step_loss = 0.0
         for _ in range(args.grad_accum):
@@ -306,6 +325,7 @@ def main():
 
         running_loss += step_loss
         running_n += 1
+        pbar.set_postfix(loss=f"{step_loss:.4f}", lr=f"{optimizer.param_groups[0]['lr']:.2e}")
 
         if step % args.log_every == 0:
             lr = optimizer.param_groups[0]["lr"]
@@ -333,6 +353,16 @@ def main():
             log_history.append(eval_entry)
             logger.info(f"[eval] step {step}: {eval_entry}")
             flush_state()
+
+            # Keep the best-validation adapter so a long run isn't all-or-nothing.
+            v_loss = eval_entry.get("eval_val_loss")
+            if v_loss is not None and v_loss < best_val["loss"]:
+                best_val.update(loss=v_loss, step=step)
+                model.save_pretrained(os.path.join(args.output_dir, "best-ckpt"))
+                logger.info(f"  new best val loss {v_loss:.4f} @ step {step} -> best-ckpt")
+
+    pbar.close()
+    logger.info(f"Best val loss {best_val['loss']:.4f} @ step {best_val['step']}")
 
     # Save adapter (includes special_tokens via modules_to_save) + meta
     ckpt_dir = os.path.join(args.output_dir, "finetuned-ckpt")
