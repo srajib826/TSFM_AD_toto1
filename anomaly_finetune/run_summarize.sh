@@ -12,8 +12,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-source /userdata1/rajib/miniconda3/etc/profile.d/conda.sh
-conda activate toto_ft
 
 METRIC="${METRIC:-VUS-PR}"          # only used when >1 CSV is given
 
@@ -21,7 +19,7 @@ METRIC="${METRIC:-VUS-PR}"          # only used when >1 CSV is given
 if [ "$#" -gt 0 ]; then
   CSVS=("$@")
 else
-  CSVS=("${IN_CSV:-$SCRIPT_DIR/eval_results_ZS.csv}")
+  CSVS=("${IN_CSV:-$SCRIPT_DIR/eval_results_FT_bestckpt.csv}")
 fi
 
 for c in "${CSVS[@]}"; do

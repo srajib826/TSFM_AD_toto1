@@ -6,14 +6,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# source /home/rajib/miniconda3/etc/profile.d/conda.sh
-source /userdata1/rajib/miniconda3/etc/profile.d/conda.sh
+source /home/rajib/miniconda3/etc/profile.d/conda.sh
+# source /userdata1/rajib/miniconda3/etc/profile.d/conda.sh
 
 conda activate toto_ft
 
 # VUS_ROC_VUS_PR lives in the Chronos workspace; add it to PYTHONPATH (read-only use).
-# VUS_ROOT="${VUS_ROOT:-/home/rajib/Sir_git_TSAD/TSFM-anomaly/Chronos_Finetuning/rajib_work_space}"
-VUS_ROOT="${VUS_ROOT:-/userdata1/rajib/TSFM-anomaly/Chronos_Finetuning/rajib_work_space}"
+VUS_ROOT="${VUS_ROOT:-/home/rajib/Sir_git_TSAD/TSFM-anomaly/Chronos_Finetuning/rajib_work_space}"
+# VUS_ROOT="${VUS_ROOT:-/userdata1/rajib/TSFM-anomaly/Chronos_Finetuning/rajib_work_space}"
 # Import `toto` from the repo checkout (../toto), not from site-packages, so local
 # edits to the model take effect without reinstalling.
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -22,7 +22,7 @@ export PYTHONPATH="${SCRIPT_DIR}:${REPO_ROOT}:${VUS_ROOT}${PYTHONPATH:+:${PYTHON
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 PREPARED_DIR="${PREPARED_DIR:-$SCRIPT_DIR/prepared_total}"
-CHECKPOINT="${CHECKPOINT:-}"          # empty => zero-shot base
+CHECKPOINT="${CHECKPOINT:-/home/rajib/TSFM_AD_toto1/anomaly_finetune/toto-single-stage_mtsbench_HS/best-ckpt}"          # empty => zero-shot base
 DEVICE="${DEVICE:-cuda}"
 SCORE_METHOD="${SCORE_METHOD:-interval}"
 AGG_METHOD="${AGG_METHOD:-topk_mean}"
@@ -38,7 +38,7 @@ SAMPLE_CHUNK="${SAMPLE_CHUNK:-32}"
 # drift vs fp32 is smaller than the sampling noise already present at NUM_SAMPLES=256.
 # Set AMP=0 to force fp32.
 AMP="${AMP:-1}"
-OUT_CSV="${OUT_CSV:-$SCRIPT_DIR/eval_results_ZS.csv}"
+OUT_CSV="${OUT_CSV:-$SCRIPT_DIR/eval_results_FT_bestckpt.csv}"
 
 ARGS=(
   --prepared_dir  "$PREPARED_DIR"
