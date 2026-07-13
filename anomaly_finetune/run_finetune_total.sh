@@ -17,7 +17,7 @@ export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 PREPARED_DIR="${PREPARED_DIR:-$SCRIPT_DIR/prepared_total}"
-OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/toto-single-stage_mtsbench_HS}"
+OUTPUT_DIR="${OUTPUT_DIR:-$SCRIPT_DIR/toto-single-stage_mtsbench_HS_v2}"
 PRETRAINED_MODEL="${PRETRAINED_MODEL:-Datadog/Toto-Open-Base-1.0}"
 DEVICE="${DEVICE:-cuda}"
 
@@ -27,12 +27,12 @@ CONTEXT_LENGTH="${CONTEXT_LENGTH:-512}"
 PREDICTION_LENGTH="${PREDICTION_LENGTH:-64}"
 
 # LoRA
-LORA_R="${LORA_R:-16}"
+LORA_R="${LORA_R:-32}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
 
 # Objective (maskloss v2 defaults)
-MARGIN_M="${MARGIN_M:-5}"
+MARGIN_M="${MARGIN_M:-10}"
 MARGIN_LAMBDA="${MARGIN_LAMBDA:-1.0}"
 HINGE_MODE="${HINGE_MODE:-per_step}"
 MARGIN_MODE="${MARGIN_MODE:-relative}"
@@ -57,6 +57,9 @@ GRAD_ACCUM="${GRAD_ACCUM:-2}"
 EVAL_EVERY="${EVAL_EVERY:-250}"
 # Keep eval <= train batch; at 8 it can OOM against a train peak of 6.
 EVAL_BATCH_WINDOWS="${EVAL_BATCH_WINDOWS:-6}"
+# Total windows in the fixed, dataset-stratified eval subset (split equally across
+# datasets). 1320 => 120 windows from each of the 11 val datasets.
+EVAL_WINDOWS="${EVAL_WINDOWS:-1320}"
 LOG_EVERY="${LOG_EVERY:-10}"
 SEED="${SEED:-42}"
 
@@ -94,6 +97,7 @@ ARGS=(
   --grad_accum           "$GRAD_ACCUM"
   --eval_every           "$EVAL_EVERY"
   --eval_batch_windows   "$EVAL_BATCH_WINDOWS"
+  --eval_windows         "$EVAL_WINDOWS"
   --log_every            "$LOG_EVERY"
   --seed                 "$SEED"
 )

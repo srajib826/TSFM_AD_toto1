@@ -6,7 +6,8 @@ ordered per-dataset test pkls from `prepare_total.py`
 (`per_dataset/<DS>/{test_model_inputs.pkl, test_series_meta.pkl}`), runs the
 `[SEP]/[REG]` Toto model, turns the [REG]-token horizon forecast error into a
 per-timestamp anomaly score, reassembles it onto each series' timeline, and computes
-VUS-PR / VUS-ROC / AUC-PR / AUC-ROC (+ F1 variants) per series.
+VUS-PR / VUS-ROC / AUC-PR / AUC-ROC (+ F1 variants) per series. The per-series numbers
+are then averaged into a per-dataset table and MACRO/MICRO overalls, printed at the end.
 
 Layout per test window (from data prep):
     target = [ normal(N) | context(C) | future(P) ]     (F, N+C+P)
@@ -40,6 +41,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+
+METRICS = ("VUS-PR", "VUS-ROC", "AUC-PR", "AUC-ROC",
+           "Standard-F1", "PA-F1", "Event-based-F1", "R-based-F1", "Affiliation-F")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,10 +229,27 @@ def eval_dataset(ds, args, model, wrapper, device, get_metrics, pbar=None):
                    f"AUC-PR={res['AUC-PR']:.4f}  AUC-ROC={res['AUC-ROC']:.4f}")
         results["series_id"].append(sid)
         results["dataset"].append(ds)
-        for k in ("VUS-PR", "VUS-ROC", "AUC-PR", "AUC-ROC",
-                  "Standard-F1", "PA-F1", "Event-based-F1", "R-based-F1", "Affiliation-F"):
+        for k in METRICS:
             results[k].append(res[k])
     return results
+
+
+def summarize(all_results):
+    """Print, per dataset, the mean of each metric over that dataset's test series."""
+    datasets = sorted(set(all_results["dataset"]))
+    ds_of = np.asarray(all_results["dataset"])
+    per_ds = {ds: {k: float(np.mean(np.asarray(all_results[k])[ds_of == ds])) for k in METRICS}
+              for ds in datasets}
+    n_series = {ds: int((ds_of == ds).sum()) for ds in datasets}
+
+    width = max([len(ds) for ds in datasets] + [8])
+    header = f"{'dataset':<{width}} {'n':>4}  " + "  ".join(f"{k:>14}" for k in METRICS)
+    print(f"\n{len(all_results['series_id'])} series / {len(datasets)} datasets\n")
+    print(header)
+    print("-" * len(header))
+    for ds in datasets:
+        row = "  ".join(f"{per_ds[ds][k]:>14.4f}" for k in METRICS)
+        print(f"{ds:<{width}} {n_series[ds]:>4}  {row}")
 
 
 def main():
@@ -267,18 +288,7 @@ def main():
         print("No series scored.")
         return
 
-    print(f"\n================ MEAN OVER {len(all_results['series_id'])} SERIES ================")
-    for k in ("VUS-PR", "VUS-ROC", "AUC-PR", "AUC-ROC",
-              "Standard-F1", "PA-F1", "Event-based-F1", "R-based-F1", "Affiliation-F"):
-        print(f"  {k:<16}: {np.mean(all_results[k]):.4f}")
-
-    try:
-        import pandas as pd
-
-        pd.DataFrame(all_results).to_csv(args.out_csv, index=False)
-        print(f"\nPer-series results -> {args.out_csv}")
-    except Exception as e:
-        print(f"(could not write csv: {e})")
+    summarize(all_results)
 
 
 def parse_args():
@@ -314,7 +324,6 @@ def parse_args():
     p.add_argument("--sliding_window_VUS", type=int, default=100)
     p.add_argument("--vus_version", default="opt", choices=["opt", "opt_mem"])
     p.add_argument("--vus_thre", type=int, default=250)
-    p.add_argument("--out_csv", default=os.path.join(_HERE, "eval_results.csv"))
     return p.parse_args()
 
 

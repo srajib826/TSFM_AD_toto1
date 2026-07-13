@@ -24,6 +24,7 @@ import glob
 import logging
 import os
 import pickle
+from collections import OrderedDict
 from typing import NamedTuple
 
 import numpy as np
@@ -226,9 +227,73 @@ class HSSampler:
             yield collate_windows([self.pool.windows[i] for i in idx])
 
 
-def iter_eval_batches(pool: AnomalyPool, batch_windows: int):
-    """Deterministic in-order batches over an eval pool (val/test)."""
-    for i in range(0, len(pool), batch_windows):
-        chunk = pool.windows[i : i + batch_windows]
-        if chunk:
-            yield collate_windows(chunk)
+def build_eval_subset(pool: AnomalyPool, max_windows: int, p_anom: float = 1.0 / 3.0, seed: int = 42):
+    """Hierarchically stratified, FIXED subset of an eval pool: dataset -> [window idx].
+
+    Mirrors HSSampler's dataset->kind->window hierarchy, with two differences that matter
+    for a validation set:
+
+      * Sampling is WITHOUT replacement and seeded, and the subset is built once and
+        reused at every eval. A freshly-resampled val set would add sampling noise on
+        top of the training signal, so val loss at step 1000 and step 2000 would not be
+        comparable -- which is the whole point of the curve.
+      * The budget is split EQUALLY across datasets (`max_windows // n_ds` each, remainder
+        handed out round-robin). Taking the pool in order instead gives you whichever
+        dataset sorts first: the val pool starts with 568 Daphnet windows, so the old
+        in-order `iter_eval_batches` + `eval_max_batches=50` (=300 windows) scored
+        Daphnet and nothing else, across all 34,772 val windows.
+
+    Within a dataset the budget is split anomalous/normal by `p_anom` (matching the
+    training mix); if one kind is short, the other absorbs the slack so each dataset
+    still spends its full share.
+    """
+    rng = np.random.default_rng(seed)
+    n_ds = len(pool.ds_names)
+    if n_ds == 0:
+        return OrderedDict()
+
+    per_ds = max(1, max_windows // n_ds)
+    extra = max(0, max_windows - per_ds * n_ds)
+
+    subset = OrderedDict()
+    for k, name in enumerate(pool.ds_names):
+        members = np.flatnonzero(pool.ds_of_window == k)
+        if members.size == 0:
+            continue
+        budget = min(per_ds + (1 if k < extra else 0), members.size)
+
+        anom = members[pool.n_anom[members] > 0]
+        norm = members[pool.n_anom[members] == 0]
+        n_a = min(int(round(budget * p_anom)), anom.size)
+        n_n = min(budget - n_a, norm.size)
+        n_a = min(budget - n_n, anom.size)  # let anomalous absorb any normal shortfall
+
+        picked = np.concatenate([
+            rng.choice(anom, size=n_a, replace=False) if n_a else np.empty(0, dtype=np.int64),
+            rng.choice(norm, size=n_n, replace=False) if n_n else np.empty(0, dtype=np.int64),
+        ])
+        subset[name] = sorted(int(i) for i in picked)
+
+    total = sum(len(v) for v in subset.values())
+    mix = "  ".join(f"{n}={len(v)}" for n, v in subset.items())
+    logger.info(f"[eval-subset] {total} windows, {len(subset)} datasets (seed {seed}): {mix}")
+    return subset
+
+
+def iter_eval_batches(pool: AnomalyPool, batch_windows: int, subset=None):
+    """Yield `(dataset_name, batch)` over an eval pool, deterministically.
+
+    With `subset` (from `build_eval_subset`), batches never straddle datasets, so the
+    caller can accumulate per-dataset metrics and macro-average them. Without it, falls
+    back to walking the whole pool in order.
+    """
+    if subset is None:
+        subset = OrderedDict()
+        for k, name in enumerate(pool.ds_names):
+            subset[name] = [int(i) for i in np.flatnonzero(pool.ds_of_window == k)]
+
+    for name, idx in subset.items():
+        for i in range(0, len(idx), batch_windows):
+            chunk = [pool.windows[j] for j in idx[i : i + batch_windows]]
+            if chunk:
+                yield name, collate_windows(chunk)

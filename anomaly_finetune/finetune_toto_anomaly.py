@@ -31,6 +31,7 @@ import argparse
 import json
 import logging
 import os
+from collections import defaultdict
 
 import torch
 import torch.nn as nn
@@ -222,23 +223,34 @@ def log_trainable(model):
 #  Eval
 # ─────────────────────────────────────────────────────────────────────────────
 @torch.no_grad()
-def evaluate(model, wrapper, combined_loss, pool, args, device, max_batches):
+def evaluate(model, wrapper, combined_loss, pool, subset, args, device):
+    """Evaluate over `subset` (built once by build_eval_subset), which gives every
+    dataset in the pool an equal window budget -- so a plain mean over it is already
+    balanced across datasets. Per-dataset losses are returned alongside the mean so the
+    spread across datasets is visible in the curves.
+    """
     from toto_anomaly_data import iter_eval_batches
 
     model.eval()
     acc = _fresh_acc()
+    ds_sum, ds_cnt = defaultdict(float), defaultdict(int)
     loss_sum, n_batches = 0.0, 0
-    for bi, batch in enumerate(iter_eval_batches(pool, args.eval_batch_windows)):
-        if bi >= max_batches:
-            break
+    for ds, batch in iter_eval_batches(pool, args.eval_batch_windows, subset):
         batch = batch.to(device)
         loss = compute_margin_loss(model, wrapper, combined_loss, batch, args, acc)
-        loss_sum += float(loss.item())
+        l = float(loss.item())
+        loss_sum += l
         n_batches += 1
+        ds_sum[ds] += l
+        ds_cnt[ds] += 1
     model.train()
+
+    if not n_batches:
+        return {}
     metrics = acc_to_metrics(acc)
-    if n_batches:
-        metrics["loss"] = round(loss_sum / n_batches, 4)
+    metrics["loss"] = round(loss_sum / n_batches, 4)
+    for ds in ds_cnt:
+        metrics[f"ds_{ds}_loss"] = round(ds_sum[ds] / ds_cnt[ds], 4)
     return metrics
 
 
@@ -259,7 +271,7 @@ def main():
 
     from toto.model.losses import CombinedLoss
     from toto.model.scheduler import WarmupStableDecayLR
-    from toto_anomaly_data import HSSampler, load_eval_pool, load_train_pool
+    from toto_anomaly_data import HSSampler, build_eval_subset, load_eval_pool, load_train_pool
     from toto_anomaly_model import TotoAnomalyModel
 
     device = torch.device(args.device if (args.device != "cuda" or torch.cuda.is_available()) else "cpu")
@@ -285,6 +297,10 @@ def main():
 
     val_pool = load_eval_pool(args.prepared_dir, "val", datasets, args.prediction_length)
     test_pool = load_eval_pool(args.prepared_dir, "test", datasets, args.prediction_length)
+    # Fixed, dataset-stratified eval subsets, built once and reused at every eval so the
+    # curves are comparable step to step.
+    val_subset = build_eval_subset(val_pool, args.eval_windows, p_anom=args.p_anom, seed=args.seed)
+    test_subset = build_eval_subset(test_pool, args.eval_windows, p_anom=args.p_anom, seed=args.seed)
 
     # Optim
     params = [p for p in model.parameters() if p.requires_grad]
@@ -344,11 +360,11 @@ def main():
 
         if args.eval_every > 0 and (step % args.eval_every == 0 or step == args.max_steps):
             eval_entry = {"step": step}
-            if len(val_pool):
-                vm = evaluate(model, wrapper, combined_loss, val_pool, args, device, args.eval_max_batches)
+            if val_subset:
+                vm = evaluate(model, wrapper, combined_loss, val_pool, val_subset, args, device)
                 eval_entry.update({f"eval_val_{k}": v for k, v in vm.items()})
-            if len(test_pool):
-                tm = evaluate(model, wrapper, combined_loss, test_pool, args, device, args.eval_max_batches)
+            if test_subset:
+                tm = evaluate(model, wrapper, combined_loss, test_pool, test_subset, args, device)
                 eval_entry.update({f"eval_test_{k}": v for k, v in tm.items()})
             log_history.append(eval_entry)
             logger.info(f"[eval] step {step}: {eval_entry}")
@@ -427,7 +443,10 @@ def parse_args():
     p.add_argument("--log_every", type=int, default=10)
     p.add_argument("--eval_every", type=int, default=200)
     p.add_argument("--eval_batch_windows", type=int, default=8)
-    p.add_argument("--eval_max_batches", type=int, default=50)
+    p.add_argument("--eval_windows", type=int, default=1320,
+                   help="Total windows in the fixed eval subset, split equally across datasets "
+                        "(11 val datasets -> 120 each). Replaces the old --eval_max_batches, which "
+                        "walked the pool in order and so only ever reached the first dataset.")
     return p.parse_args()
 
 

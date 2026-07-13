@@ -38,7 +38,6 @@ SAMPLE_CHUNK="${SAMPLE_CHUNK:-32}"
 # drift vs fp32 is smaller than the sampling noise already present at NUM_SAMPLES=256.
 # Set AMP=0 to force fp32.
 AMP="${AMP:-1}"
-OUT_CSV="${OUT_CSV:-$SCRIPT_DIR/eval_results_FT_bestckpt.csv}"
 
 ARGS=(
   --prepared_dir  "$PREPARED_DIR"
@@ -48,7 +47,6 @@ ARGS=(
   --num_samples   "$NUM_SAMPLES"
   --batch_windows "$BATCH_WINDOWS"
   --sample_chunk  "$SAMPLE_CHUNK"
-  --out_csv       "$OUT_CSV"
 )
 if [ "$AMP" != "0" ]; then
   ARGS+=(--amp)

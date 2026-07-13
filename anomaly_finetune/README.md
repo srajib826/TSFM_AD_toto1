@@ -62,7 +62,8 @@ CHECKPOINT=toto-single-stage_mtsbench_HS/finetuned-ckpt bash run_forward_total.s
 # zero-shot base (no --checkpoint) for comparison
 bash run_forward_total.sh
 ```
-Writes per-series metrics to `eval_results.csv` and prints the mean.
+Prints per-series metrics, then a table of each metric averaged over the test series of
+each dataset.
 
 ### Step 4 — Plot the loss / forecasting-error curves
 ```bash
